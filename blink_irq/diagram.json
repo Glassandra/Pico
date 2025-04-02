@@ -1,0 +1,48 @@
+{
+    "version": 1,
+    "author": "Anonymous maker",
+    "editor": "wokwi",
+    "parts": [
+      {
+        "type": "wokwi-pi-pico",
+        "id": "pico",
+        "top": -3.15,
+        "left": 3.6,
+        "attrs": { "builder": "pico-sdk" }
+      },
+      {
+        "type": "wokwi-led",
+        "id": "led1",
+        "top": 152.4,
+        "left": -75.4,
+        "rotate": 270,
+        "attrs": { "color": "purple", "flip": "1" }
+      },
+      {
+        "type": "wokwi-pushbutton",
+        "id": "btn1",
+        "top": 159.8,
+        "left": 96,
+        "attrs": { "color": "white", "xray": "", "bounce": "0", "key": " " }
+      },
+      {
+        "type": "wokwi-led",
+        "id": "led2",
+        "top": 104.4,
+        "left": -75.4,
+        "rotate": 270,
+        "attrs": { "color": "magenta", "flip": "1" }
+      }
+    ],
+    "connections": [
+      [ "pico:GP0", "$serialMonitor:RX", "", [] ],
+      [ "pico:GP1", "$serialMonitor:TX", "", [] ],
+      [ "btn1:2.l", "pico:GP16", "violet", [ "h0" ] ],
+      [ "btn1:1.l", "pico:GND.5", "violet", [ "h0" ] ],
+      [ "led1:C", "pico:GND.4", "magenta", [ "h0" ] ],
+      [ "led2:A", "pico:GP10", "purple", [ "h0" ] ],
+      [ "led2:C", "pico:GND.3", "magenta", [ "h0" ] ],
+      [ "led1:A", "pico:GP14", "purple", [ "h0" ] ]
+    ],
+    "dependencies": {}
+  }
