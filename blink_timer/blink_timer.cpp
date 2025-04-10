@@ -39,4 +39,5 @@ int main()
 
         sleep_ms(200);
     }
+    return 0;
 }
