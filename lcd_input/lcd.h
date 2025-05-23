@@ -54,6 +54,7 @@ void lcd_print(const char *str) {
   }
 }
 
+
 void lcd_char(char value) {
   lcd_send_byte(value, LCD_CHARACTER);
 }

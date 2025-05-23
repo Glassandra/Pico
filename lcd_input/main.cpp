@@ -23,14 +23,14 @@ int main() {
   lcd_send_command(LCD_RETURNHOME);
   const uint32_t  char_delay = 200;
 
-  char name[32];
+  char name[16];
 
   while (true) {
     printf("Name? ");
     if (scanf("%31s", name) == 1) {
       lcd_clear();
       lcd_send_command(LCD_RETURNHOME);
-      lcd_print(name);
+      lcd_print_lines("Hello ", name);
       printf("Hello %s! \n", name);
     } else {
       printf("Error\n");

@@ -48,12 +48,6 @@ void lcd_data(uint8_t data) {
   lcd_send_byte(data, true);
 }
 
-void lcd_print(const char *str) {
-  while (*str) {
-    lcd_data(*str++);
-  }
-}
-
 void lcd_char(char value) {
   lcd_send_byte(value, LCD_CHARACTER);
 }
@@ -70,6 +64,29 @@ void lcd_set_cursor(uint8_t row, uint8_t col) {
 void lcd_clear(void) {
   lcd_send_command(LCD_CLEARDISPLAY);
   sleep_ms(2); 
+}
+
+void lcd_print(const char *str) {
+  while (*str) {
+    for (int i = 0; i < 16; i++) {
+      lcd_data(*str++);
+    }
+    lcd_set_cursor(1,0);
+    for (int i = 0; i < 16; i++) {
+      lcd_data(*str++);
+    }
+    break;
+  }
+}
+
+void lcd_print_lines(const char *str, const char *str2) {
+  while (*str) {
+    lcd_data(*str++);
+  }
+  lcd_set_cursor(1,0);
+  while(*str2) {
+    lcd_data(*str2++);
+  }
 }
 
 void lcd_init(void) {
