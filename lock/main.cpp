@@ -1,3 +1,8 @@
+
+
+/* Only tested on wokwi, dont have enough buttons to try on local pico*/
+
+
 #include <stdio.h>
 #include "pico/stdlib.h"
 

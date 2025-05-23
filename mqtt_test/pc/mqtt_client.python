@@ -1,0 +1,271 @@
+import socket
+import threading
+import time
+import argparse
+from collections import defaultdict
+
+class SimpleMQTTBroker:
+    """A simple MQTT broker implementation."""
+    
+    # MQTT constants
+    CONNECT = 1
+    CONNACK = 2
+    PUBLISH = 3
+    PUBACK = 4
+    SUBSCRIBE = 8
+    SUBACK = 9
+    DISCONNECT = 14
+    
+    def __init__(self, host='0.0.0.0', port=1883):
+        self.host = host
+        self.port = port
+        self.clients = {}  # socket -> client_id
+        self.subscriptions = defaultdict(list)  # topic -> list of client sockets
+        self.running = False
+        self.server_socket = None
+    
+    def start(self):
+        """Start the MQTT broker."""
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket.bind((self.host, self.port))
+        self.server_socket.listen(5)
+        self.running = True
+        
+        print(f"MQTT Broker running on {self.host}:{self.port}")
+        
+        try:
+            while self.running:
+                client_socket, address = self.server_socket.accept()
+                print(f"New connection from {address}")
+                client_thread = threading.Thread(target=self.handle_client, args=(client_socket, address))
+                client_thread.daemon = True
+                client_thread.start()
+        except KeyboardInterrupt:
+            print("Shutting down broker...")
+        finally:
+            self.stop()
+    
+    def stop(self):
+        """Stop the MQTT broker."""
+        self.running = False
+        if self.server_socket:
+            self.server_socket.close()
+        
+        # Close all client connections
+        for sock in list(self.clients.keys()):
+            try:
+                sock.close()
+            except:
+                pass
+    
+    def handle_client(self, client_socket, address):
+        """Handle an MQTT client connection."""
+        try:
+            while self.running:
+                # Read fixed header
+                first_byte = client_socket.recv(1)
+                if not first_byte:
+                    break
+                    
+                msg_type = (first_byte[0] & 0xF0) >> 4
+                
+                # Read remaining length using variable encoding
+                multiplier = 1
+                remaining_len = 0
+                while True:
+                    len_byte = client_socket.recv(1)[0]
+                    remaining_len += (len_byte & 127) * multiplier
+                    multiplier *= 128
+                    if not (len_byte & 128):
+                        break
+                
+                # Read the payload based on the remaining length
+                payload = client_socket.recv(remaining_len) if remaining_len > 0 else b''
+                
+                # Process message based on type
+                if msg_type == self.CONNECT:
+                    self.handle_connect(client_socket, payload)
+                elif msg_type == self.PUBLISH:
+                    self.handle_publish(client_socket, first_byte[0], payload)
+                elif msg_type == self.SUBSCRIBE:
+                    self.handle_subscribe(client_socket, payload)
+                elif msg_type == self.DISCONNECT:
+                    break
+        except Exception as e:
+            print(f"Error handling client {address}: {e}")
+        finally:
+            # Clean up when client disconnects
+            client_id = self.clients.get(client_socket)
+            if client_id:
+                print(f"Client {client_id} disconnected")
+                del self.clients[client_socket]
+            
+            # Remove from subscriptions
+            for topic in self.subscriptions:
+                if client_socket in self.subscriptions[topic]:
+                    self.subscriptions[topic].remove(client_socket)
+            
+            try:
+                client_socket.close()
+            except:
+                pass
+    
+    def handle_connect(self, client_socket, payload):
+        """Handle CONNECT message."""
+        # Extract protocol name length (should be 4 for 'MQTT')
+        proto_len = (payload[0] << 8) | payload[1]
+        
+        # Skip protocol name and version
+        pos = 2 + proto_len + 1
+        
+        # Connect flags
+        flags = payload[pos]
+        pos += 1
+        
+        # Keep-alive (2 bytes)
+        pos += 2
+        
+        # Client ID
+        client_id_len = (payload[pos] << 8) | payload[pos+1]
+        pos += 2
+        client_id = payload[pos:pos+client_id_len].decode('utf-8')
+        
+        # Store client information
+        self.clients[client_socket] = client_id
+        print(f"Client {client_id} connected")
+        
+        # Send CONNACK
+        connack = bytes([self.CONNACK << 4, 2, 0, 0])
+        client_socket.send(connack)
+    
+    def handle_publish(self, client_socket, first_byte, payload):
+        """Handle PUBLISH message."""
+        qos = (first_byte & 0x06) >> 1
+        
+        # Extract topic length
+        topic_len = (payload[0] << 8) | payload[1]
+        
+        # Extract topic
+        topic = payload[2:2+topic_len].decode('utf-8')
+        
+        # Extract packet identifier for QoS 1 or 2
+        pos = 2 + topic_len
+        if qos > 0:
+            packet_id = (payload[pos] << 8) | payload[pos+1]
+            pos += 2
+        
+        # Extract message
+        message = payload[pos:]
+        
+        print(f"Received PUBLISH from {self.clients.get(client_socket, 'unknown')}")
+        print(f"  Topic: {topic}")
+        print(f"  Message: {message.decode('utf-8')}")
+        
+        # Forward message to subscribed clients
+        self.broadcast(topic, message, client_socket)
+        
+        # Send PUBACK for QoS 1
+        if qos == 1:
+            puback = bytes([self.PUBACK << 4, 2, (packet_id >> 8) & 0xFF, packet_id & 0xFF])
+            client_socket.send(puback)
+    
+    def handle_subscribe(self, client_socket, payload):
+        """Handle SUBSCRIBE message."""
+        # Extract packet identifier
+        packet_id = (payload[0] << 8) | payload[1]
+        pos = 2
+        
+        # Process each subscription
+        topics = []
+        while pos < len(payload):
+            # Topic length
+            topic_len = (payload[pos] << 8) | payload[pos+1]
+            pos += 2
+            
+            # Topic
+            topic = payload[pos:pos+topic_len].decode('utf-8')
+            pos += topic_len
+            
+            # QoS
+            qos = payload[pos]
+            pos += 1
+            
+            print(f"Client {self.clients.get(client_socket, 'unknown')} subscribed to {topic}")
+            
+            # Add to subscriptions
+            if client_socket not in self.subscriptions[topic]:
+                self.subscriptions[topic].append(client_socket)
+            
+            topics.append((topic, qos))
+        
+        # Send SUBACK
+        suback = bytearray([self.SUBACK << 4, 2 + len(topics), (packet_id >> 8) & 0xFF, packet_id & 0xFF])
+        for _, qos in topics:
+            suback.append(qos)
+        
+        client_socket.send(suback)
+    
+    def broadcast(self, topic, message, sender_socket=None):
+        """Broadcast message to all subscribers of a topic."""
+        # Find matching topics (including wildcards)
+        for sub_topic, subscribers in self.subscriptions.items():
+            if self.topic_matches(sub_topic, topic):
+                for client_socket in subscribers:
+                    if client_socket != sender_socket:  # Don't send back to sender
+                        try:
+                            # Construct PUBLISH packet
+                            topic_bytes = topic.encode('utf-8')
+                            header = bytes([self.PUBLISH << 4, 2 + len(topic_bytes) + len(message)])
+                            topic_len = bytes([(len(topic_bytes) >> 8) & 0xFF, len(topic_bytes) & 0xFF])
+                            
+                            client_socket.send(header + topic_len + topic_bytes + message)
+                        except Exception as e:
+                            print(f"Error sending to client: {e}")
+    
+    def topic_matches(self, subscription, published_topic):
+        """Check if a published topic matches a subscription topic pattern."""
+        # Simple exact matching for now
+        return subscription == published_topic
+
+    def publish_message(self, topic, message):
+        """Publish a message from the broker itself."""
+        message_bytes = message.encode('utf-8')
+        self.broadcast(topic, message_bytes)
+        print(f"Broker published to {topic}: {message}")
+
+def main():
+    parser = argparse.ArgumentParser(description='Simple MQTT Broker')
+    parser.add_argument('--host', default='0.0.0.0', help='Host to bind to')
+    parser.add_argument('--port', type=int, default=1883, help='Port to bind to')
+    args = parser.parse_args()
+    
+    broker = SimpleMQTTBroker(args.host, args.port)
+    
+    # Start broker in a separate thread
+    broker_thread = threading.Thread(target=broker.start)
+    broker_thread.daemon = True
+    broker_thread.start()
+    
+    # Command line interface
+    print("Broker started. Enter commands to publish to the Pico:")
+    print("  on  - Turn on LED")
+    print("  off - Turn off LED")
+    print("  q   - Quit")
+    
+    try:
+        while True:
+            cmd = input("> ")
+            if cmd.lower() == "q":
+                break
+            elif cmd.lower() in ["on", "off"]:
+                broker.publish_message("pc/command", cmd.lower())
+            else:
+                print("Unknown command. Use 'on', 'off', or 'q'")
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+    finally:
+        broker.stop()
+
+if __name__ == "__main__":
+    main()
